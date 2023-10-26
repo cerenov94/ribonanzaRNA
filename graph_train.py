@@ -21,9 +21,9 @@ from model_3 import AttentiveFP
 x_train = pd.read_parquet('train_files/clean_train.parquet')
 x_valid = pd.read_parquet('train_files/valid_with_structure.parquet')
 
-#transform = T.Compose([T.LocalDegreeProfile()])
-train_ds = Graph_Dataset(x_train)
-valid_ds = Valid_Dataset(x_valid)
+transform = T.Compose([T.AddLaplacianEigenvectorPE(k=4,attr_name=None,is_undirected=True)])
+train_ds = Graph_Dataset(x_train,transform=transform)
+valid_ds = Valid_Dataset(x_valid,transform=transform)
 
 
 
@@ -91,6 +91,7 @@ def learn(model,train_loader,valid_loader,loss_fn,resume = False):
             optimizer.zero_grad()
             batch = batch.to(device)
             prediction = model(batch.x,batch.edge_index,batch.edge_attr,batch.batch)
+
             unbatched_prediction = tg.utils.unbatch(prediction, batch.batch, dim=0)
 
             new_preds = torch.concatenate([torch.nn.functional.pad(x, pad=[0, 0, 0, 206 - x.size(0)]) for x in unbatched_prediction])
@@ -162,8 +163,8 @@ def learn(model,train_loader,valid_loader,loss_fn,resume = False):
             print('Creating submission...\t')
 
             test_seq = pd.read_parquet('train_files/test_seq_struct.parquet')
-            test_ds = Test_Graph_Dataset(test_seq)
-            test_dataloader = tg.loader.DataLoader(test_ds, batch_size=16, drop_last=False, num_workers=8)
+            test_ds = Test_Graph_Dataset(test_seq,transform=transform)
+            test_dataloader = tg.loader.DataLoader(test_ds, batch_size=4, drop_last=False, num_workers=8)
 
             model.eval()
             preds = []
@@ -185,4 +186,4 @@ def learn(model,train_loader,valid_loader,loss_fn,resume = False):
             gc.collect()
 
 if __name__ == '__main__':
-    learn(model,train_loader,valid_loader,loss_fn,resume=True)
+    learn(model,train_loader,valid_loader,loss_fn,resume=False)

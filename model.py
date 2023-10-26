@@ -96,26 +96,15 @@ class A_Module(nn.Module):
 class GNN(nn.Module):
     def __init__(self):
         super(GNN,self).__init__()
-        self.hidden_channels =192
-
-        self.node_encoder = gnn.ChebConv(4, self.hidden_channels,K=5)
-        self.edge_encoder = nn.Linear(4,self.hidden_channels)
-
-
+        self.hidden_channels = 256
+        self.node_encoder = gnn.ChebConv(8, self.hidden_channels,K=5)
+        self.edge_encoder = nn.Linear(6,self.hidden_channels)
         self.layers = torch.nn.ModuleList()
-        self.gru_layers = nn.ModuleList()
-        self.res_layers = nn.ModuleList()
-        self.a_module = A_Module(self.hidden_channels,self.hidden_channels)
-
-        heads = 4
-        for i in range(1,5):
+        for i in range(1,11):
             conv1 = gnn.NNConv(self.hidden_channels,self.hidden_channels,nn = MapE2NxN(self.hidden_channels,self.hidden_channels*self.hidden_channels,self.hidden_channels))
-            # conv1 = gnn.GENConv(self.hidden_channels, self.hidden_channels, aggr='softmax',
-            #                t=1.0, learn_t=True, num_layers=2, norm='layer',bias=True)
-            #conv1 = GATEConv(self.hidden_channels,self.hidden_channels,dropout=0.1,edge_dim=self.hidden_channels)
             norm = nn.LayerNorm(self.hidden_channels, elementwise_affine=True)
             act = nn.ReLU(inplace=True)
-            layer = gnn.DeepGCNLayer(conv1,norm,act,block='res+',dropout=0.1,ckpt_grad=i % 3)
+            layer = gnn.DeepGCNLayer(conv1,norm,act,block='res+',dropout=0.5,ckpt_grad=i % 3)
             self.layers.append(layer)
         self.final_layer = gnn.GENConv(self.hidden_channels,2,learn_t=True,norm='layer',edge_dim=self.hidden_channels,bias=True)
         self.linear = nn.Linear(self.hidden_channels,2)
@@ -127,9 +116,7 @@ class GNN(nn.Module):
             x = layer1(x,edge_index,edge_attr)
         x = self.layers[0].act(self.layers[0].norm(x))
         x = F.dropout(x,p=0.1,training=self.training)
-        #x = F.relu_(self.final_layer(x,edge_index,edge_attr))
-        x = self.linear(x)
-        return x
+        return self.linear(x)
 
 
 

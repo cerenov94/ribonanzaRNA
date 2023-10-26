@@ -351,7 +351,8 @@ class Graph_Dataset(tg.data.Dataset):
 
         # stack target reactivities
         edge_index = torch.LongTensor(list(g.edges())).t().contiguous()
-        edge_index, edge_attr = tg.utils.to_undirected(edge_index, edge_attr[:, :4])
+        edge_index, edge_attr = tg.utils.to_undirected(edge_index, edge_attr[:, :6])
+
         target = torch.from_numpy(np.stack([self.react_a[item], self.react_d[item]], -1))
 
         noise_a = torch.Tensor([self.a_noise[item]])
@@ -400,7 +401,7 @@ class Valid_Dataset(tg.data.Dataset):
         # stack target reactivities
         target = torch.from_numpy(np.stack([self.react_a[item], self.react_d[item]], -1))
         edge_index = torch.LongTensor(list(g.edges())).t().contiguous()
-        edge_index, edge_attr = tg.utils.to_undirected(edge_index, edge_attr[:, :4])
+        edge_index, edge_attr = tg.utils.to_undirected(edge_index, edge_attr[:, :6])
         noise_a = torch.Tensor([self.a_noise[item]])
         noise_d = torch.Tensor([self.d_noise[item]])
         data = tg.data.Data(x=node_features,
@@ -433,7 +434,7 @@ class Test_Graph_Dataset(tg.data.Dataset):
 
         edge_attr = torch.from_numpy(np.load(f'train_files/test_attributes/{item}.npy'))
         edge_index = torch.LongTensor(list(g.edges())).t().contiguous()
-        edge_index, edge_attr = tg.utils.to_undirected(edge_index, edge_attr[:, :4])
+        edge_index, edge_attr = tg.utils.to_undirected(edge_index, edge_attr[:, :6])
         data = tg.data.Data(x=node_features,
                             edge_index=edge_index,
                             edge_attr=edge_attr,
