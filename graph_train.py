@@ -14,16 +14,17 @@ from torch_geometric.data import Batch
 import torch_geometric as tg
 import torch_geometric.transforms as T
 from tqdm import tqdm
-from model_2 import Gat_NN
+from model_2 import AttentiveGraphNet
 from model_3 import AttentiveFP
 
 
 x_train = pd.read_parquet('train_files/clean_train.parquet')
 x_valid = pd.read_parquet('train_files/valid_with_structure.parquet')
 
-transform = T.Compose([T.AddLaplacianEigenvectorPE(k=4,attr_name=None,is_undirected=True)])
-train_ds = Graph_Dataset(x_train,transform=transform)
-valid_ds = Valid_Dataset(x_valid,transform=transform)
+#transform = T.Compose([T.AddLaplacianEigenvectorPE(k=2,attr_name=None,is_undirected=True)])
+train_ds = Graph_Dataset(x_train)
+#train_ds  = Valid_Dataset(x_valid)
+valid_ds = Valid_Dataset(x_valid)
 
 
 
@@ -36,8 +37,9 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
 
-model = GNN()
-#model = AttentiveFP(4,256,2,edge_dim=7,num_layers=8,num_timesteps=12,dropout=0.1)
+#model = GNN()
+#model = AttentiveFP(6,512,2,edge_dim=6,num_layers=8,num_timesteps=2,dropout=0.5)
+model = AttentiveGraphNet(4,768,2,6,12)
 
 
 
@@ -61,14 +63,14 @@ def learn(model,train_loader,valid_loader,loss_fn,resume = False):
 
     #optimizer = torch.optim.Adam(model.parameters(), lr=0.01,weight_decay=0.0005)
     optimizer = torch.optim.SGD(model.parameters(),lr=0.005,momentum=0.9)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,verbose=True,patience=5)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,verbose=True,patience=1,factor=0.9)
     #scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer,gamma=0.9)
     last_epoch = 0
     best_train_loss =float('inf')
     best_valid_loss = float('inf')
     best_compet_score = float('inf')
     model.to(device)
-    if resume:
+    if resume == 'best':
         print('Loading last checkpoint...')
         model.load_state_dict(config.ckp['weights'])
         optimizer.load_state_dict(config.ckp['optimizer'])
@@ -76,9 +78,19 @@ def learn(model,train_loader,valid_loader,loss_fn,resume = False):
         best_valid_loss = config.ckp['best_valid_loss']
         best_compet_score = config.ckp['best_compet_score']
         last_epoch = config.ckp['epoch']
-    print('train step...\t')
-    print(f'Starting train from: Epoch: {last_epoch} | Best valid loss : {best_valid_loss:.5f} | compet score: {best_compet_score:.5f}\t')
 
+    elif resume == 'last':
+        ckp = torch.load('logs/last_logs.pth')
+        model.load_state_dict(ckp['weights'])
+        optimizer.load_state_dict(ckp['optimizer'])
+        best_train_loss = ckp['best_train_loss']
+        best_valid_loss = config.ckp['best_valid_loss']
+        best_compet_score = config.ckp['best_compet_score']
+        last_epoch = ckp['epoch']
+
+
+    print(f'Starting train from: Epoch: {last_epoch} | Best valid loss : {best_valid_loss:.5f} | compet score: {best_compet_score:.5f}\t')
+    print('train step...\t')
     for epoch in range(last_epoch,1000):
         start_time = time()
 
@@ -86,12 +98,11 @@ def learn(model,train_loader,valid_loader,loss_fn,resume = False):
         train_loss = 0
 
 
-        for batch in tqdm(train_loader): 
+        for batch in tqdm(train_loader):
 
             optimizer.zero_grad()
             batch = batch.to(device)
             prediction = model(batch.x,batch.edge_index,batch.edge_attr,batch.batch)
-
             unbatched_prediction = tg.utils.unbatch(prediction, batch.batch, dim=0)
 
             new_preds = torch.concatenate([torch.nn.functional.pad(x, pad=[0, 0, 0, 206 - x.size(0)]) for x in unbatched_prediction])
@@ -141,6 +152,13 @@ def learn(model,train_loader,valid_loader,loss_fn,resume = False):
         scheduler.step(compet_score)
         print(f"Epoch {epoch + 1}: Train duration {train_duration} | Train Loss: {train_loss:.5f} | Valid Loss: {valid_loss:.5f} | compet score: {compet_score:.5f}")
         # saving model
+        torch.save({'weights': model.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'epoch': epoch + 1,
+                    'best_train_loss': train_loss,
+                    'best_valid_loss':valid_loss,
+                    'best_compet_score': compet_score,
+                    }, f'logs/last_logs.pth')
         if valid_loss < best_valid_loss or compet_score < best_compet_score:
             if train_loss < best_train_loss:
                 best_train_loss = train_loss
@@ -156,15 +174,16 @@ def learn(model,train_loader,valid_loader,loss_fn,resume = False):
                             'best_valid_loss': best_valid_loss,
                             'best_compet_score': best_compet_score,
                             },f'logs/train_logs.pth')
+
             print('Train logs saved.')
             torch.cuda.empty_cache()
             gc.collect()
-        if (epoch+1) % 16 == 0:
+        if (epoch+1) % 50 == 0:
             print('Creating submission...\t')
 
             test_seq = pd.read_parquet('train_files/test_seq_struct.parquet')
-            test_ds = Test_Graph_Dataset(test_seq,transform=transform)
-            test_dataloader = tg.loader.DataLoader(test_ds, batch_size=4, drop_last=False, num_workers=8)
+            test_ds = Test_Graph_Dataset(test_seq)
+            test_dataloader = tg.loader.DataLoader(test_ds, batch_size=1, drop_last=False, num_workers=8)
 
             model.eval()
             preds = []
@@ -186,4 +205,4 @@ def learn(model,train_loader,valid_loader,loss_fn,resume = False):
             gc.collect()
 
 if __name__ == '__main__':
-    learn(model,train_loader,valid_loader,loss_fn,resume=False)
+    learn(model,train_loader,valid_loader,loss_fn,resume='last')

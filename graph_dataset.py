@@ -20,8 +20,9 @@ edge_funcs_1: List[Callable] = [
     add_pseudoknots,
 ]
 import sknetwork as skn
+from torch.utils.data import Dataset
 
-
+pad = tg.transforms.Pad(457,700)
 
 class F_Dataset(tg.data.Dataset):
     def __init__(self, df, transform=None, pre_transform=None, use_bpps=False):
@@ -311,38 +312,22 @@ class Graph_Dataset(tg.data.Dataset):
         df_a = df.loc[df.experiment_type == '2A3_MaP'].reset_index(drop=True)
         df_d = df.loc[df.experiment_type == 'DMS_MaP'].reset_index(drop=True)
         self.seq = df_a['sequence'].values
-        self.bpps_paths = df_a['paths'].values
         self.structures = df_a['structure'].values
         # select target values
         self.react_a = df_a[[c for c in df_a.columns if 'reactivity_0' in c]].values
         self.react_d = df_d[[c for c in df_d.columns if 'reactivity_0' in c]].values
-        # select target values error
-        # self.lh = pd.read_parquet('train_files/lh.parquet')
-        # self.lh.rename(columns={'n_1':'0_x','n_2':'0_y'},inplace=True)
-        # self.lh.drop('count',axis=1,inplace=True)
-        self.nucleotid_mapper = {'A':1,'G':2,'C':3,'U':4}
-        self.a_noise = df_a['signal_to_noise'].values
-        self.d_noise = df_d['signal_to_noise'].values
-
-
+        self.nucleotid_mapper = {'A':0,'G':1,'C':2,'U':3}
         del df_a, df_d
         gc.collect()
 
     def len(self):
         return len(self.seq)
 
-    def loadbpps(self, bpp_path):
-        content = pd.read_csv(bpp_path, header=None, delimiter=' ')
-        content[[0, 1]] = content[[0, 1]] - 1
-        return content
-
     def get(self, item):
         # loading seq bpp
-        seq, bpp_path = self.seq[item], self.bpps_paths[item]
+        seq= self.seq[item]
         ss = self.structures[item]
         #emb = torch.LongTensor([self.nucleotid_mapper[x] for x in seq])
-
-
         # constructing graph
         node_features = graph_utils.ohe_seq(seq)
         g = construct_graph(sequence=seq, dotbracket=ss, edge_construction_funcs=edge_funcs_1)
@@ -355,19 +340,15 @@ class Graph_Dataset(tg.data.Dataset):
 
         target = torch.from_numpy(np.stack([self.react_a[item], self.react_d[item]], -1))
 
-        noise_a = torch.Tensor([self.a_noise[item]])
-        noise_d = torch.Tensor([self.d_noise[item]])
+        #node_features,edge_index = pad(node_features,edge_index)
+
         data = tg.data.Data(x=node_features,
                             edge_index=edge_index,
                             edge_attr=edge_attr,
                             y=target,
-                            #emb=emb
-                            noise_a = noise_a,
-                            noise_d = noise_d
                             )
 
         return data
-
 class Valid_Dataset(tg.data.Dataset):
     def __init__(self, df, transform=None, pre_transform=None):
         super().__init__(df, transform, pre_transform)
@@ -379,13 +360,8 @@ class Valid_Dataset(tg.data.Dataset):
         # select target values
         self.react_a = df_a[[c for c in df_a.columns if 'reactivity_0' in c]].values
         self.react_d = df_d[[c for c in df_d.columns if 'reactivity_0' in c]].values
-        # select target values error
-        # self.lh = pd.read_parquet('train_files/lh.parquet')
-        # self.lh.rename(columns={'n_1':'0_x','n_2':'0_y'},inplace=True)
-        # self.lh.drop('count',axis=1,inplace=True)
-        self.a_noise = df_a['signal_to_noise'].values
-        self.d_noise = df_d['signal_to_noise'].values
         del df_a, df_d
+        self.nucleotid_mapper = {'A':0,'G':1,'C':2,'U':3}
         gc.collect()
 
     def len(self):
@@ -395,6 +371,8 @@ class Valid_Dataset(tg.data.Dataset):
         # loading seq bpp
         seq, bpp_path = self.seq[item], self.bpps_paths[item]
         ss = self.structures[item]
+
+
         node_features = graph_utils.ohe_seq(seq)
         g = construct_graph(sequence=seq, dotbracket=ss, edge_construction_funcs=edge_funcs_1)
         edge_attr = torch.from_numpy(np.load(f'train_files/valid_attributes/{item}.npy'))
@@ -402,14 +380,10 @@ class Valid_Dataset(tg.data.Dataset):
         target = torch.from_numpy(np.stack([self.react_a[item], self.react_d[item]], -1))
         edge_index = torch.LongTensor(list(g.edges())).t().contiguous()
         edge_index, edge_attr = tg.utils.to_undirected(edge_index, edge_attr[:, :6])
-        noise_a = torch.Tensor([self.a_noise[item]])
-        noise_d = torch.Tensor([self.d_noise[item]])
         data = tg.data.Data(x=node_features,
                             edge_index=edge_index,
                             edge_attr=edge_attr,
                             y=target,
-                            noise_a = noise_a,
-                            noise_d = noise_d
                             )
 
         return data
@@ -420,6 +394,7 @@ class Test_Graph_Dataset(tg.data.Dataset):
         super().__init__(df, transform, pre_transform)
         self.sequences = df['sequence'].values
         self.structures = df['structure'].values
+        self.nucleotid_mapper = {'A':0,'G':1,'C':2,'U':3}
 
     def len(self):
         return len(self.sequences)
@@ -435,9 +410,15 @@ class Test_Graph_Dataset(tg.data.Dataset):
         edge_attr = torch.from_numpy(np.load(f'train_files/test_attributes/{item}.npy'))
         edge_index = torch.LongTensor(list(g.edges())).t().contiguous()
         edge_index, edge_attr = tg.utils.to_undirected(edge_index, edge_attr[:, :6])
+
+        emb = torch.LongTensor([self.nucleotid_mapper[x] for x in seq])
+        emb = torch.nn.functional.pad(emb, [0, 457 - len(seq)])
+        mask = torch.zeros(457, dtype=torch.bool)
         data = tg.data.Data(x=node_features,
                             edge_index=edge_index,
                             edge_attr=edge_attr,
+                            emb = emb,
+                            emb_mask = mask
                             )
 
         return data
@@ -447,12 +428,12 @@ class Test_Graph_Dataset(tg.data.Dataset):
 
 
 # # #
-# x_train = pd.read_parquet('train_files/valid_with_structure.parquet')
-# ds = Graph_Dataset(x_train,mode_valid=True)
-
+# x_train = pd.read_parquet('train_files/test_seq_struct.parquet')
+# ds = Test_Graph_Dataset(x_train)
+#
 # x = ds[0]
 # print(x)
-
+#
 
 
 
