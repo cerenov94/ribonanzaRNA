@@ -80,43 +80,56 @@ class MapE2NxN(torch.nn.Module):
         return x
 
 
-class A_Module(nn.Module):
-    def __init__(self,in_channels,out_channels):
-        super(A_Module,self).__init__()
-        self.trans = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(in_channels, nhead=4, dim_feedforward=4 * in_channels), num_layers=4
-        )
-        self.linear = nn.Linear(in_channels, out_channels)
 
-    def forward(self, x):
-        x = self.trans(x)
-        x = self.linear(x)
+
+class GraphTransEncoderLayer(torch.nn.Module):
+    def __init__(self,in_channels,dropout = 0.3,heads = None):
+        super().__init__()
+        self.in_channels = in_channels
+        self.dropout_prob = dropout
+        self.encoder = gnn.GATv2Conv(in_channels,32,heads=in_channels//32,negative_slope=0.1,edge_dim=in_channels)
+        self.lin = nn.Linear(self.in_channels,self.in_channels)
+        self.norm1 = nn.LayerNorm(self.in_channels)
+        self.act = nn.GELU()
+        self.dropout = nn.Dropout(p=self.dropout_prob)
+
+    def forward(self,x,edge_index,edge_attr):
+        x_1 = x
+        x_1 = self.encoder(x_1,edge_index,edge_attr)
+        x = self.dropout(self.act(self.norm1(x+x_1)))
         return x
 
 class GNN(nn.Module):
-    def __init__(self):
+    def __init__(self,in_channels=6,hidden_channels = 128,decoder_hidden=128,edge_dim=4,dropout=0.5,num_layers=8,num_attentive_layers=2):
         super(GNN,self).__init__()
-        self.hidden_channels = 256
-        self.node_encoder = gnn.ChebConv(8, self.hidden_channels,K=5)
-        self.edge_encoder = nn.Linear(6,self.hidden_channels)
-        self.layers = torch.nn.ModuleList()
-        for i in range(1,11):
-            conv1 = gnn.NNConv(self.hidden_channels,self.hidden_channels,nn = MapE2NxN(self.hidden_channels,self.hidden_channels*self.hidden_channels,self.hidden_channels))
-            norm = nn.LayerNorm(self.hidden_channels, elementwise_affine=True)
-            act = nn.ReLU(inplace=True)
-            layer = gnn.DeepGCNLayer(conv1,norm,act,block='res+',dropout=0.5,ckpt_grad=i % 3)
-            self.layers.append(layer)
-        self.final_layer = gnn.GENConv(self.hidden_channels,2,learn_t=True,norm='layer',edge_dim=self.hidden_channels,bias=True)
-        self.linear = nn.Linear(self.hidden_channels,2)
+        self.node_encoder = nn.Linear(in_channels,hidden_channels,bias=False)
+        self.edge_encoder = nn.Linear(edge_dim,hidden_channels)
+        self.decoder = torch.nn.ModuleList()
+        self.encoder = torch.nn.ModuleList()
+        for e in range(1,num_attentive_layers+1):
+            self.encoder.append(GraphTransEncoderLayer(hidden_channels,dropout=dropout))
+
+        self.out_encoder = nn.Linear(hidden_channels,decoder_hidden)
+        for i in range(1,num_layers+1):
+            conv = gnn.NNConv(decoder_hidden,decoder_hidden,nn = nn.Linear(hidden_channels,decoder_hidden*decoder_hidden))
+            norm = nn.LayerNorm(decoder_hidden, elementwise_affine=True)
+            act = nn.GELU()
+            layer = gnn.DeepGCNLayer(conv,norm,act,block='res+',dropout=dropout)
+            self.decoder.append(layer)
+        self.output = nn.Linear(decoder_hidden,2)
     def forward(self,x,edge_index,edge_attr,batch):
-        x = self.node_encoder(x,edge_index)
-        edge_attr = (self.edge_encoder(edge_attr))
-        x = self.layers[0].conv(x, edge_index, edge_attr)
-        for layer1 in self.layers[1:]:
-            x = layer1(x,edge_index,edge_attr)
-        x = self.layers[0].act(self.layers[0].norm(x))
-        x = F.dropout(x,p=0.1,training=self.training)
-        return self.linear(x)
+
+        x = self.node_encoder(x)
+        edge_attr = self.edge_encoder(edge_attr)
+        for a_layer in self.encoder:
+            x = a_layer(x,edge_index,edge_attr)
+        #x = F.relu_(self.out_encoder(x))
+
+        h = self.decoder[0].conv(x,edge_index,edge_attr)
+        for layer1 in self.decoder:
+            h = layer1((x+h),edge_index,edge_attr)
+        x = self.decoder[0].act(self.decoder[0].norm(h))
+        return self.output(x)
 
 
 

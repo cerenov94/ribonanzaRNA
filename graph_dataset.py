@@ -19,10 +19,7 @@ edge_funcs_1: List[Callable] = [
     add_phosphodiester_bonds,
     add_pseudoknots,
 ]
-import sknetwork as skn
-from torch.utils.data import Dataset
 
-pad = tg.transforms.Pad(457,700)
 
 class F_Dataset(tg.data.Dataset):
     def __init__(self, df, transform=None, pre_transform=None, use_bpps=False):
@@ -309,9 +306,15 @@ class Test_Bpps_Dataset(tg.data.Dataset):
 class Graph_Dataset(tg.data.Dataset):
     def __init__(self, df, transform=None, pre_transform=None):
         super().__init__(df, transform, pre_transform)
+        df['L'] = df['sequence'].apply(len)
+        df = df[df['L'] >= 177].reset_index(drop=True)
         df_a = df.loc[df.experiment_type == '2A3_MaP'].reset_index(drop=True)
         df_d = df.loc[df.experiment_type == 'DMS_MaP'].reset_index(drop=True)
+        m = (df_a['signal_to_noise'].values >= 0.8) & (df_d['signal_to_noise'].values >= 0.8)
+        df_a = df_a.loc[m].reset_index(drop=True)
+        df_d = df_d.loc[m].reset_index(drop=True)
         self.seq = df_a['sequence'].values
+        self.seq_id = df_a['sequence_id'].values
         self.structures = df_a['structure'].values
         # select target values
         self.react_a = df_a[[c for c in df_a.columns if 'reactivity_0' in c]].values
@@ -326,17 +329,19 @@ class Graph_Dataset(tg.data.Dataset):
     def get(self, item):
         # loading seq bpp
         seq= self.seq[item]
+        seq_id = self.seq_id[item]
         ss = self.structures[item]
-        #emb = torch.LongTensor([self.nucleotid_mapper[x] for x in seq])
+        node_features = torch.LongTensor([self.nucleotid_mapper[x] for x in seq])
         # constructing graph
-        node_features = graph_utils.ohe_seq(seq)
+        #node_features = graph_utils.ohe_seq(seq)
         g = construct_graph(sequence=seq, dotbracket=ss, edge_construction_funcs=edge_funcs_1)
-
-        edge_attr = torch.from_numpy(np.load(f'train_files/clean_attributes/{item}.npy'))
+        #
+        edge_attr = torch.from_numpy(np.load(f'train_files/new_files/train_attr/{seq_id}.npy'))
 
         # stack target reactivities
         edge_index = torch.LongTensor(list(g.edges())).t().contiguous()
-        edge_index, edge_attr = tg.utils.to_undirected(edge_index, edge_attr[:, :6])
+        edge_index, edge_attr = tg.utils.to_undirected(edge_index, edge_attr[:, :5])
+        #edge_index = tg.utils.to_undirected(edge_index)
 
         target = torch.from_numpy(np.stack([self.react_a[item], self.react_d[item]], -1))
 
@@ -352,9 +357,13 @@ class Graph_Dataset(tg.data.Dataset):
 class Valid_Dataset(tg.data.Dataset):
     def __init__(self, df, transform=None, pre_transform=None):
         super().__init__(df, transform, pre_transform)
+        df['L'] = df['sequence'].apply(len)
+        df = df[df['L'] >= 177].reset_index(drop=True)
         df_a = df.loc[df.experiment_type == '2A3_MaP'].reset_index(drop=True)
         df_d = df.loc[df.experiment_type == 'DMS_MaP'].reset_index(drop=True)
+
         self.seq = df_a['sequence'].values
+        self.seq_id = df_a['sequence_id'].values
         self.bpps_paths = df_a['paths'].values
         self.structures = df_a['structure'].values
         # select target values
@@ -369,17 +378,19 @@ class Valid_Dataset(tg.data.Dataset):
 
     def get(self, item):
         # loading seq bpp
-        seq, bpp_path = self.seq[item], self.bpps_paths[item]
+        seq = self.seq[item]
+        seq_id = self.seq_id[item]
         ss = self.structures[item]
 
-
-        node_features = graph_utils.ohe_seq(seq)
+        node_features = torch.LongTensor([self.nucleotid_mapper[x] for x in seq])
+        #node_features = graph_utils.ohe_seq(seq)
         g = construct_graph(sequence=seq, dotbracket=ss, edge_construction_funcs=edge_funcs_1)
-        edge_attr = torch.from_numpy(np.load(f'train_files/valid_attributes/{item}.npy'))
+        edge_attr = torch.from_numpy(np.load(f'train_files/new_files/valid_attr/{seq_id}.npy'))
         # stack target reactivities
         target = torch.from_numpy(np.stack([self.react_a[item], self.react_d[item]], -1))
         edge_index = torch.LongTensor(list(g.edges())).t().contiguous()
-        edge_index, edge_attr = tg.utils.to_undirected(edge_index, edge_attr[:, :6])
+        edge_index, edge_attr = tg.utils.to_undirected(edge_index, edge_attr[:, :5])
+        #edge_index = tg.utils.to_undirected(edge_index)
         data = tg.data.Data(x=node_features,
                             edge_index=edge_index,
                             edge_attr=edge_attr,
@@ -404,21 +415,142 @@ class Test_Graph_Dataset(tg.data.Dataset):
         seq = self.sequences[item]
 
         ss = self.structures[item]
-        node_features = graph_utils.ohe_seq(seq)
+        node_features = torch.LongTensor([self.nucleotid_mapper[x] for x in seq])
+        #node_features = graph_utils.ohe_seq(seq)
         g = construct_graph(sequence=seq, dotbracket=ss, edge_construction_funcs=edge_funcs_1)
-
+        #
         edge_attr = torch.from_numpy(np.load(f'train_files/test_attributes/{item}.npy'))
         edge_index = torch.LongTensor(list(g.edges())).t().contiguous()
-        edge_index, edge_attr = tg.utils.to_undirected(edge_index, edge_attr[:, :6])
+        edge_index, edge_attr = tg.utils.to_undirected(edge_index, edge_attr[:, :5])
+        #edge_index = tg.utils.to_undirected(edge_index)
 
-        emb = torch.LongTensor([self.nucleotid_mapper[x] for x in seq])
-        emb = torch.nn.functional.pad(emb, [0, 457 - len(seq)])
-        mask = torch.zeros(457, dtype=torch.bool)
+        # emb = torch.LongTensor([self.nucleotid_mapper[x] for x in seq])
+        # emb = torch.nn.functional.pad(emb, [0, 457 - len(seq)])
+        # mask = torch.zeros(457, dtype=torch.bool)
         data = tg.data.Data(x=node_features,
                             edge_index=edge_index,
                             edge_attr=edge_attr,
-                            emb = emb,
-                            emb_mask = mask
+                            # emb = emb,
+                            # emb_mask = mask
+                            )
+
+        return data
+
+
+class Train_Dataset_with_additional_data(tg.data.Dataset):
+    def __init__(self, df, transform=None, pre_transform=None):
+        super().__init__(df, transform, pre_transform)
+        df['L'] = df['sequence'].apply(len)
+        df = df[df['L'] >= 177].reset_index(drop=True)
+        additional_df = pd.read_parquet('train_files/new_files/additional_sequences.parquet')
+        add_a = additional_df[additional_df.experiment_type == '2A3_MaP'].reset_index(drop=True)
+        add_d = additional_df[additional_df.experiment_type == 'DMS_MaP'].reset_index(drop=True)
+
+        add_seq = add_a['sequence'].values
+        add_seq_id = add_a['sequence_id'].values
+        add_struct = add_a['structure'].values
+        add_react_a = add_a[[c for c in add_a.columns if 'reactivity_0' in c]].values
+        add_react_d = add_d[[c for c in add_d.columns if 'reactivity_0' in c]].values
+
+        df_a = df.loc[df.experiment_type == '2A3_MaP'].reset_index(drop=True)
+        df_d = df.loc[df.experiment_type == 'DMS_MaP'].reset_index(drop=True)
+        m = (df_a['signal_to_noise'].values >= 0.8) & (df_d['signal_to_noise'].values >= 0.8)
+        df_a = df_a.loc[m].reset_index(drop=True)
+        df_d = df_d.loc[m].reset_index(drop=True)
+
+        self.seq = df_a['sequence'].values
+        self.seq = np.concatenate([self.seq, add_seq])
+
+        self.seq_id = df_a['sequence_id'].values
+        self.seq_id = np.concatenate([self.seq_id, add_seq_id])
+
+        self.structures = df_a['structure'].values
+        self.structures = np.concatenate([self.structures, add_struct])
+
+        # select target values
+        nans = np.empty([172529, 136])
+        nans[:] = np.nan
+        self.react_a = df_a[[c for c in df_a.columns if 'reactivity_0' in c]].values
+
+        self.react_a = np.concatenate([self.react_a, nans], axis=1)
+
+        self.react_a = np.concatenate([self.react_a, add_react_a[:, :342]], axis=0)
+        self.react_d = df_d[[c for c in df_d.columns if 'reactivity_0' in c]].values
+        self.react_d = np.concatenate([self.react_d, nans], axis=1)
+        self.react_d = np.concatenate([self.react_d, add_react_d[:, :342]], axis=0)
+        self.nucleotid_mapper = {'A': 0, 'G': 1, 'C': 2, 'U': 3}
+        del df_a, df_d
+        gc.collect()
+
+    def len(self):
+        return len(self.seq)
+
+    def get(self, item):
+        # loading seq bpp
+        seq = self.seq[item]
+        ss = self.structures[item]
+        seq_id = self.seq_id[item]
+        # node_features = torch.LongTensor([self.nucleotid_mapper[x] for x in seq])
+        # constructing graph
+        node_features = graph_utils.ohe_seq(seq)
+        g = construct_graph(sequence=seq, dotbracket=ss, edge_construction_funcs=edge_funcs_1)
+        #
+        edge_attr = torch.from_numpy(np.load(f'train_files/new_files/train_attr/{seq_id}.npy'))
+        # stack target reactivities
+        edge_index = torch.LongTensor(list(g.edges())).t().contiguous()
+        edge_index, edge_attr = tg.utils.to_undirected(edge_index, edge_attr[:, :6])
+        # edge_index = tg.utils.to_undirected(edge_index)
+
+        target = torch.from_numpy(np.stack([self.react_a[item], self.react_d[item]], -1))
+
+        # node_features,edge_index = pad(node_features,edge_index)
+
+        data = tg.data.Data(x=node_features,
+                            edge_index=edge_index,
+                            edge_attr=edge_attr,
+                            y=target)
+
+        return data
+
+class Valid_Dataset_177(tg.data.Dataset):
+    def __init__(self, df, transform=None, pre_transform=None):
+        super().__init__(df, transform, pre_transform)
+        df['L'] = df['sequence'].apply(len)
+        df = df[df['L'] >= 177].reset_index(drop=True)
+        df_a = df.loc[df.experiment_type == '2A3_MaP'].reset_index(drop=True)
+        df_d = df.loc[df.experiment_type == 'DMS_MaP'].reset_index(drop=True)
+        self.seq = df_a['sequence'].values
+        self.seq_id = df_a['sequence_id'].values
+        self.structures = df_a['structure'].values
+        # select target values
+        self.react_a = df_a[[c for c in df_a.columns if 'reactivity_0' in c]].values
+        self.react_d = df_d[[c for c in df_d.columns if 'reactivity_0' in c]].values
+        del df_a, df_d
+        self.nucleotid_mapper = {'A':0,'G':1,'C':2,'U':3}
+        gc.collect()
+
+    def len(self):
+        return len(self.seq)
+
+    def get(self, item):
+        # loading seq bpp
+        seq = self.seq[item]
+        ss = self.structures[item]
+        seq_id = self.seq_id[item]
+
+        #node_features = torch.LongTensor([self.nucleotid_mapper[x] for x in seq])
+        node_features = graph_utils.ohe_seq(seq)
+        g = construct_graph(sequence=seq, dotbracket=ss, edge_construction_funcs=edge_funcs_1)
+        edge_attr = torch.from_numpy(np.load(f'train_files/new_files/valid_attr/{seq_id}.npy'))
+        # stack target reactivities
+        target = torch.from_numpy(np.stack([self.react_a[item], self.react_d[item]], -1))
+        edge_index = torch.LongTensor(list(g.edges())).t().contiguous()
+        edge_index, edge_attr = tg.utils.to_undirected(edge_index, edge_attr[:, :6])
+        #edge_index = tg.utils.to_undirected(edge_index)
+        data = tg.data.Data(x=node_features,
+                            edge_index=edge_index,
+                            edge_attr=edge_attr,
+                            y=target,
                             )
 
         return data
