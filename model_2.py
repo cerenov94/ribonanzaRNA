@@ -46,7 +46,6 @@ class AttentiveGraphNet(torch.nn.Module):
             out_channels: int,
             edge_dim: int,
             num_layers: int,
-            num_a_layers:int,
             dropout: float,
     ):
         super().__init__()
@@ -78,24 +77,6 @@ class AttentiveGraphNet(torch.nn.Module):
                                 #norm_kwargs={'in_channels':self.hidden_channels}
                                 )
             self.transformer.append(layer)
-        self.perfomer_layers = nn.ModuleList()
-        for j in range(1,num_a_layers+1):
-            layer = gnn.GPSConv(channels=self.hidden_channels,
-                                conv=gnn.TransformerConv(in_channels=self.hidden_channels,
-                                                         out_channels=32,
-                                                         heads=self.hidden_channels // 32,
-                                                         beta=True,
-                                                         edge_dim=self.hidden_channels
-                                                         ),
-                                act='gelu',
-                                heads=self.hidden_channels//32,
-                                dropout=self.dropout,
-                                norm='layer',
-                                attn_type='performer',
-                                )
-            self.perfomer_layers.append(layer)
-        self.norm = gnn.LayerNorm(self.hidden_channels)
-
 
         self.output = gnn.Linear(self.hidden_channels,self.out_channels)
     def forward(self,x,edge_index,edge_attr,batch,pe):
@@ -105,5 +86,5 @@ class AttentiveGraphNet(torch.nn.Module):
 
         edge_attr = self.edge_encoder(edge_attr)
         for layer,perform_layer in zip(self.transformer,self.perfomer_layers):
-            x = self.norm(layer(x,edge_index,batch=batch,edge_attr=edge_attr)+perform_layer(x,edge_index,batch=batch,edge_attr=edge_attr))
+            x = layer(x,edge_index,batch=batch,edge_attr=edge_attr)
         return self.output(x)
