@@ -40,10 +40,9 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
 
-#model = GNN(in_channels=12,hidden_channels=128,decoder_hidden=128,edge_dim=6,dropout=0.5,num_layers=12,num_attentive_layers=6)
-#model = AttentiveFP(6,512,2,edge_dim=6,num_layers=8,num_timesteps=2,dropout=0.5)
-model = AttentiveGraphNet(in_channels=4,pe=8,hidden_channels=192,out_channels=2,edge_dim=5,num_layers=8,num_a_layers=8,dropout=0.1)
-#model = GraphTransformer(12,192,2,5,12,4)
+
+model = AttentiveGraphNet(in_channels=4,pe=8,hidden_channels=192,out_channels=2,edge_dim=5,num_layers=20,dropout=0.1)
+
 
 
 def loss_fn(pred, target):
@@ -51,10 +50,6 @@ def loss_fn(pred, target):
     loss = loss[~torch.isnan(loss)].mean()
     return loss
 
-
-
-
-criterion = torch.nn.L1Loss(reduction='none')
 
 def learn(model,train_loader,valid_loader,loss_fn,resume = False):
 
