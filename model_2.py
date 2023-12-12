@@ -85,6 +85,6 @@ class AttentiveGraphNet(torch.nn.Module):
         x = torch.concatenate([x,pe],dim=1)
 
         edge_attr = self.edge_encoder(edge_attr)
-        for layer,perform_layer in zip(self.transformer,self.perfomer_layers):
+        for layer in self.transformer:
             x = layer(x,edge_index,batch=batch,edge_attr=edge_attr)
         return self.output(x)
